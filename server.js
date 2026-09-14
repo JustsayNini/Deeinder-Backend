@@ -43,15 +43,6 @@ const {v2:cloudinary} = require("cloudinary");
 const { error } = require("console");
 
 
-// const storage = multer.memoryStorage(
-//   // destination: (req, file, cb) => {
-//   //   cb(null, "uploads");
-//   // },
-//   // filename: (req, file, cb) => {
-//   //   cb(null, uuidv4() + file.originalname);
-//   // },
-// );
-
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.CLOUD_API_KEY,
@@ -114,7 +105,7 @@ async function basicAuth(req, res, next) {
 }
 }
 
-//signing up
+//signing up - DANIELLA
 app.post("/signUp", upload.single("pfp"), async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -218,7 +209,7 @@ app.post("/signUp", upload.single("pfp"), async (req, res) => {
   }
 });
 
-//logging in (checking password and email)
+//logging in (checking password and email) - DANIELLA
 app.post("/login", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -263,7 +254,7 @@ app.post("/UploadPfp", upload.single("pfp"), async (req, res) => {
   res.status(200).json(req.file);
 });
 
-//getting all members profiles to display on home page
+//getting all members profiles to display on home page - DANIELLA
 app.get("/membersProfiles", async (req, res) => {
   try {
 
@@ -302,7 +293,7 @@ app.get("/membersProfiles", async (req, res) => {
   }
 });
 
-//getiing a single profile
+//getiing a single profile - DANIELLA
 app.get("/memberProfile/:username", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -335,7 +326,7 @@ app.get("/memberProfile/:username", async (req, res) => {
   }
 });
 
-//creating a new connection request when someone sends it
+//creating a new connection request when someone sends it - NISSI
 app.post(
   "/connectionRequest/:senderUsername/:recieverUsername",
   async (req, res) => {
@@ -372,7 +363,7 @@ app.post(
   }
 );
 
-//updating number of likes when a user likes a members profile
+//updating number of likes when a user likes a members profile - DAVID
 app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
   try {
     const memProfilesCol = db.collection("membersProfile");
@@ -396,7 +387,7 @@ app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
   }
 });
 
-//updating number of likes when a user dislikes a members profile
+//updating number of likes when a user dislikes a members profile - DAVID
 app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
   try {
     const memProfilesCol = db.collection("membersProfile");
@@ -418,7 +409,9 @@ app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
     res.status(500).send({ mesNsage: "Internal server error" });
   }
 });
-//updating profile data when user wants to edit thier profile
+
+
+//updating profile data when user wants to edit thier profile - DANIELLA
 app.put("/UpdatemembersPersonalInfo/:username",upload.single("pfp"), async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -471,6 +464,8 @@ app.put("/UpdatemembersPersonalInfo/:username",upload.single("pfp"), async (req,
   }
 });
 
+
+// Adding pictures - DAVID
 app.put("/addPictures/:username",upload.single("picture"),async (req,res)=>{
 try {
   const b64 = req.file.buffer.toString("base64");
@@ -489,6 +484,9 @@ console.error("Error adding new pictures", error);
 res.status(500).json({ error: "Internal server error" });
 }
 })
+
+
+// Removing pictures - DAVID
 
 app.put("/removePicture/:username",async (req,res)=>{
 try {
@@ -511,7 +509,7 @@ res.status(500).json({ error: "Internal server error" });
 
 
 
-//getting all connection requests recieved by user
+//getting all connection requests recieved by user - NISSI
 app.get("/connectionRequests/:username", async (req, res) => {
   try { 
     const username = req.params.username;
@@ -533,7 +531,7 @@ app.get("/connectionRequests/:username", async (req, res) => {
   }
 });
 
-//updating the hasAccepted and dataAccepted field when a user accepts a connection request
+//updating the hasAccepted and dataAccepted field when a user accepts a connection request - NISSI
 app.put(
   "/acceptedConnectionRequest/:recieverUsername",
   async (req, res) => {
@@ -565,7 +563,7 @@ app.put(
   }
 );
 
-//when a user removes a memeber as a connection
+//when a user removes a member as a connection - NISSI
 app.delete(
   "/removeConnectionRequest",
   async (req, res) => {
@@ -591,7 +589,7 @@ app.delete(
   }
 );
 
-//canceling a connection request
+//canceling a connection request - NISSI
 app.delete(
   "/cancelConnectionRequest",
   async (req, res) => {
@@ -612,7 +610,7 @@ app.delete(
   }
 );
 
-//getting messages recieved by a user
+//getting messages recieved by a user - DAVID
 app.get("/messages/:username",async (req, res) => {
   try {
     const username = req.params.username;
@@ -625,7 +623,7 @@ app.get("/messages/:username",async (req, res) => {
   }
 });
  
-//posting a new message
+//posting a new message - DAVID
 app.post("/sendAMessage",async (req, res) => {
    try {
     const username = req.params.username;
