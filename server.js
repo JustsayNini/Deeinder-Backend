@@ -10,44 +10,11 @@ const multer = require("multer");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
-const { v2: cloudinary } = require("cloudinary");
-const axios = require("axios");
-const supabase = require("./supabase_db.js");
+const { send } = require("process");
+const {v2:cloudinary} = require("cloudinary");
+const { error } = require("console");
 
-const app = express();
-const port = process.env.PORT || process.env.port || 8000;
-const uri = process.env.MONGODB_DEEINDER;
 
-// -------------------------------------------------------------------------------------------------------
-// SERVER & SOCKET.IO SETUP
-// -------------------------------------------------------------------------------------------------------
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: [
-      "https://deeinder-frontend.vercel.app",
-      "http://localhost:3000"
-    ]
-  }
-});
-
-io.on("connection", (socket) => {
-  socket.on("join_room", (data) => {
-    socket.join(data);
-  });
-
-  socket.on("send_message", (data) => {
-    socket.to(data.room).emit("recieve_message", data);
-  });
-
-  socket.on("disconnect", () => {
-    // console.log("User disconnected", socket.id);
-  });
-});
-
-// -------------------------------------------------------------------------------------------------------
-// CLOUDINARY & MULTER CONFIGURATION
-// -------------------------------------------------------------------------------------------------------
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.CLOUD_API_KEY,
@@ -118,324 +85,7 @@ async function basicAuth(req, res, next) {
   }
 }
 
-// -------------------------------------------------------------------------------------------------------
-// 
-// DAVID'S WORK & HELPER FUNCTIONS
-//
-// -------------------------------------------------------------------------------------------------------
-
-// EXTERNAL FACE DETECTION AI - DAVID
-async function verifyProfilePicture(fileBuffer) {
-  try {
-    const base64Image = fileBuffer.toString("base64");
-
-    const formData = new URLSearchParams();
-    formData.append("api_key", process.env.FACE_AI_KEY);
-    formData.append("api_secret", process.env.FACE_AI_SECRET);
-    formData.append("image_base64", base64Image);
-    formData.append("return_attributes", "blur");
-
-    const response = await axios.post("https://faceplusplus.com", formData, {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-    });
-
-    if (!response.data.faces || response.data.faces.length === 0) {
-      return {
-        isValid: false,
-        message:
-          "Animated or non-real facial images are not allowed. Please upload a proper facial image.",
-      };
-    }
-
-    return { isValid: true };
-  } catch (err) {
-    if (err.response && err.response.data) {
-      console.error("Cloud Face AI Rejection Detail:", err.response.data);
-    } else {
-      console.error("Cloud Face AI communication network error:", err.message);
-    }
-
-    return {
-      isValid: false,
-      message: "Error validating your facial image profile picture.",
-    };
-  }
-}
-
-// updating number of likes when a user likes a members profile - DAVID
-app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
-  try {
-    const member = req.params.memberUsername;
-    const liker = req.params.likerUsername;
-
-    const { data: profile } = await supabase
-      .from("membersProfile")
-      .select("likes")
-      .eq("username", member)
-      .single();
-
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
-    }
-
-    const updatedLikes = profile.likes || [];
-
-    if (!updatedLikes.includes(liker)) {
-      updatedLikes.push(liker);
-    }
-
-    const { error } = await supabase
-      .from("membersProfile")
-      .update({ likes: updatedLikes })
-      .eq("username", member);
-
-    if (!error) {
-      res.status(200).json({ message: "Successfully updated" });
-    } else {
-      throw new Error("Could not update number of likes");
-    }
-  } catch (error) {
-    console.error("Error liking profile", error);
-    res.status(500).send({ message: "Internal server error" });
-  }
-});
-
-// updating number of likes when a user dislikes a members profile - DAVID
-app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
-  try {
-    const member = req.params.memberUsername;
-    const liker = req.params.likerUsername;
-
-    const { data: profile } = await supabase
-      .from("membersProfile")
-      .select("likes")
-      .eq("username", member)
-      .single();
-
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
-    }
-
-    const currentLikes = profile.likes || [];
-    const updatedLikes = currentLikes.filter((item) => item !== liker);
-
-    const { error } = await supabase
-      .from("membersProfile")
-      .update({ likes: updatedLikes })
-      .eq("username", member);
-
-    if (!error) {
-      res.status(200).json({ message: "successfully disliked profile" });
-    } else {
-      throw new Error("Could not update number of likes");
-    }
-  } catch (error) {
-    console.error("Error disliking profile", error);
-    res.status(500).send({ message: "Internal server error" });
-  }
-});
-
-// updating profile data when user wants to edit their profile - DAVID
-app.put("/UpdatemembersPersonalInfo/:username", upload.single("pfp"), async (req, res) => {
-  let status = 500;
-  let message = "Internal server error";
-  const invalid = (m) => {
-    status = 400;
-    message = m || "Invalid input";
-  };
-  try {
-    const updates = req.body.updates ? JSON.parse(req.body.updates) : {};
-    const username = req.params.username;
-
-    if (updates.username && updates.username !== username) {
-      const newUsername = updates.username;
-      const { data: existingUser } = await supabase
-        .from("membersPersonalInfo")
-        .select("id")
-        .eq("user_name", newUsername)
-        .maybeSingle();
-
-      if (existingUser) {
-        invalid("Username already exists");
-        throw new Error("Username already exists");
-      }
-    }
-
-    let pfpUrl;
-    if (req.file) {
-      const b64 = req.file.buffer.toString("base64");
-      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
-      const uploadRes = await cloudinary.uploader.upload(dataURI);
-      pfpUrl = uploadRes.secure_url;
-    }
-
-    const personalUpdates = {};
-    if (updates.fullName) personalUpdates.full_name = updates.fullName;
-    if (updates.username) personalUpdates.user_name = updates.username;
-    if (pfpUrl) personalUpdates.pfp_path = pfpUrl;
-
-    if (Object.keys(personalUpdates).length > 0) {
-      const { error: personalErr } = await supabase
-        .from("membersPersonalInfo")
-        .update(personalUpdates)
-        .eq("user_name", username);
-      if (personalErr) throw personalErr;
-    }
-
-    const profileUpdates = {};
-    if (updates.relationshipIntent !== undefined) profileUpdates.relationship_intent = updates.relationshipIntent;
-    if (updates.shortDescription !== undefined) profileUpdates.short_description = updates.shortDescription;
-    if (updates.interests !== undefined) profileUpdates.interests = updates.interests;
-    if (updates.aboutMe !== undefined) profileUpdates.about_me = updates.aboutMe;
-
-    if (Object.keys(profileUpdates).length > 0) {
-      const { error: profileErr } = await supabase
-        .from("membersProfile")
-        .update(profileUpdates)
-        .eq("username", username);
-      if (profileErr) throw profileErr;
-    }
-
-    res.status(200).json({ message: "Profile updated successfully" });
-  } catch (error) {
-    console.error("Error updating member info", error);
-    res.status(status).json({ message });
-  }
-});
-
-// Adding pictures - DAVID
-app.put(
-  "/addPictures/:username",
-  upload.single("picture"),
-  async (req, res) => {
-    try {
-      const b64 = req.file.buffer.toString("base64");
-      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
-      const pfpPath = await cloudinary.uploader.upload(dataURI);
-
-      const { data: profile } = await supabase
-        .from("membersProfile")
-        .select("pics_paths")
-        .eq("username", req.params.username)
-        .single();
-
-      if (!profile) {
-        return res.status(404).json({ message: "Profile not found" });
-      }
-
-      const updatedPics = profile.pics_paths || [];
-      updatedPics.push(pfpPath.secure_url);
-
-      const { error } = await supabase
-        .from("membersProfile")
-        .update({ pics_paths: updatedPics })
-        .eq("username", req.params.username);
-
-      if (!error) {
-        res.status(200).json({ message: "successfully updated" });
-      } else {
-        throw new Error("couldn't add picture");
-      }
-    } catch (error) {
-      console.error("Error adding new pictures", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  }
-);
-
-// Removing pictures - DAVID
-app.put("/removePicture/:username", async (req, res) => {
-  try {
-    const path = req.body.path;
-
-    const { data: profile } = await supabase
-      .from("membersProfile")
-      .select("pics_paths")
-      .eq("username", req.params.username)
-      .single();
-
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
-    }
-
-    const currentPics = profile.pics_paths || [];
-    const updatedPics = currentPics.filter((item) => item !== path);
-
-    const { error } = await supabase
-      .from("membersProfile")
-      .update({ pics_paths: updatedPics })
-      .eq("username", req.params.username);
-
-    if (!error) {
-      res.status(200).json({ message: "successfully removed picture" });
-    } else {
-      throw new Error("couldn't remove picture");
-    }
-  } catch (error) {
-    console.error("Error removing picture", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// posting a new message - DAVID
-app.post("/sendAMessage", async (req, res) => {
-  try {
-    const messagePayload = {
-      sender_id: req.body.senderId,
-      receiver_id: req.body.recieverId,
-      message: req.body.content,
-      room: req.body.room || null,
-    };
-
-    const { error } = await supabase.from("messages").insert([messagePayload]);
-
-    if (error) throw error;
-
-    res.status(200).json({ message: "successsfully sent" });
-  } catch (error) {
-    console.error("Error sending messages", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// getting messages recieved by a user - DAVID
-app.get("/messages/:username", async (req, res) => {
-  try {
-    const username = req.params.username;
-
-    const { data: result, error } = await supabase
-      .from("messages")
-      .select("*")
-      .or(`receiver_id.eq.${username},sender_id.eq.${username}`);
-
-    if (error) throw error;
-
-    const mappedResult = result.map((msg) => ({
-      id: msg.id,
-      senderId: msg.sender_id,
-      recieverId: msg.receiver_id,
-      room: msg.room,
-      content: msg.message,
-      created_at: msg.created_at,
-    }));
-
-    res.json(mappedResult);
-  } catch (error) {
-    console.error("Error getting messages", error);
-    res.status(500).send({ message: "Internal server error" });
-  }
-});
-
-
-// -------------------------------------------------------------------------------------------------------
-// 
-// DANIELLA'S ENDPOINTS
-//
-// -------------------------------------------------------------------------------------------------------
-
-// signing up - DANIELLA
+//signing up - DANIELLA
 app.post("/signUp", upload.single("pfp"), async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -579,7 +229,7 @@ app.post("/signUp", upload.single("pfp"), async (req, res) => {
   }
 });
 
-// logging in - DANIELLA
+//logging in (checking password and email) - DANIELLA
 app.post("/login", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -634,7 +284,7 @@ app.post("/UploadPfp", upload.single("pfp"), async (req, res) => {
   res.status(200).json(req.file);
 });
 
-// getting all members profiles to display on home page - DANIELLA
+//getting all members profiles to display on home page - DANIELLA
 app.get("/membersProfiles", async (req, res) => {
   try {
     const { data: profiles, error: profileErr } = await supabase
@@ -674,7 +324,7 @@ app.get("/membersProfiles", async (req, res) => {
   }
 });
 
-// getting a single profile - DANIELLA
+//getiing a single profile - DANIELLA
 app.get("/memberProfile/:username", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -724,80 +374,32 @@ app.get("/memberProfile/:username", async (req, res) => {
   }
 });
 
-// getting unread messages and count for a user - new messages indicator - DANIELLA
-app.get("/messages/unread/:username", async (req, res) => {
-  try {
-    const username = req.params.username;
-
-    const { data: unreadMessages, error } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("receiver_id", username)
-      .eq("is_read", false)
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    const mappedMessages = unreadMessages.map((msg) => ({
-      id: msg.id,
-      senderId: msg.sender_id,
-      recieverId: msg.receiver_id,
-      room: msg.room,
-      content: msg.message,
-      isRead: msg.is_read,
-      created_at: msg.created_at
-    }));
-
-    const countBySender = {};
-    for (const msg of mappedMessages) {
-      countBySender[msg.senderId] = (countBySender[msg.senderId] || 0) + 1;
-    }
-
-    res.status(200).json({
-      totalUnread: mappedMessages.length,
-      countBySender,
-      messages: mappedMessages
-    });
-  } catch (error) {
-    console.error("Error getting unread messages", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-
-// -------------------------------------------------------------------------------------------------------
-// 
-// NISSI'S ENDPOINTS
-//
-// -------------------------------------------------------------------------------------------------------
-
-// creating a new connection request when someone sends it - NISSI
+//creating a new connection request when someone sends it - NISSI
 app.post(
   "/connectionRequest/:senderUsername/:recieverUsername",
   async (req, res) => {
     let status = 500;
     let message = "Internal server error";
+    const invalid = () => {
+      status = 400;
+      message = "user does not exist";
+    };
     try {
       const senderUsername = req.params.senderUsername;
       const recieverUsername = req.params.recieverUsername;
 
-      const { data: result, error } = await supabase
-        .from("connection_requests")
-        .insert([{
-          receiver_username: recieverUsername,
-          sender_username: senderUsername,
-          date_sent: new Date(),
-          has_accepted: false,
-          date_accepted: null,
-        }])
-        .select();
+      const result = await db
+        .collection("connectionRequests")
+        .insertOne({
+          recieverUsername,
+          senderUsername,
+          dateSent: new Date(),
+          hasAccepted: false,
+          dateAccepted: null,
+        });
 
-      if (error) {
-        console.error("Supabase Error Details:", error);
-        return res.status(400).json({ message: error.message });
-      }
-
-      if (!error && result) {
+      
+      if (result) {
         res.status(200).json({ message: "successfully sent request" });
       } else {
         throw new Error("could not send connection request");
@@ -809,7 +411,153 @@ app.post(
   }
 );
 
-// getting all connection requests recieved by user - NISSI
+//updating number of likes when a user likes a members profile - DAVID
+app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
+  try {
+    const memProfilesCol = db.collection("membersProfile");
+    const member = req.params.memberUsername;
+    const liker = req.params.likerUsername;
+
+    const result = await memProfilesCol.updateOne(
+      { username: member },
+      { $push: { likes: liker } }
+    );
+    console.log("hehe ")
+
+    if (result.modifiedCount === 1) {
+      res.status(200).json({ message: "Successfully updated" });
+    } else {
+      throw new Error("Could not update number of likes");
+    }
+  } catch (error) {
+    console.error("Error liking profile", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
+
+//updating number of likes when a user dislikes a members profile - DAVID
+app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
+  try {
+    const memProfilesCol = db.collection("membersProfile");
+    const member = req.params.memberUsername;
+    const liker = req.params.likerUsername;
+
+    const result = await memProfilesCol.updateOne(
+      { username: member },
+      { $pull: { likes: liker } }
+    );
+
+    if (result.modifiedCount === 1) {
+      res.status(200).json({ message: "successfully liked profile" });
+    } else {
+      throw new Error("Could not update number of likes");
+    }
+  } catch (error) {
+    console.error("Error disliking profile", error);
+    res.status(500).send({ mesNsage: "Internal server error" });
+  }
+});
+
+
+//updating profile data when user wants to edit thier profile - DANIELLA
+app.put("/UpdatemembersPersonalInfo/:username",upload.single("pfp"), async (req, res) => {
+  let status = 500;
+  let message = "Internal server error";
+  const invalid = () => {
+    status = 400;
+    message = "Invalid input";
+  };
+  try {
+    const updates = JSON.parse(req.body.updates);
+    const username = req.params.username;
+
+    if (updates.username && updates.username !== username) {
+      const newUsername = updates.username;
+      if (
+        await db.collection("membersProfile").findOne({ username: newUsername })
+      ) {
+        invalid();
+        throw new Error("Username already exists");
+      } 
+    }
+
+    if (req.file){
+    const b64 = req.file.buffer.toString("base64");
+    const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+    const pfpPath = await cloudinary.uploader.upload(dataURI);
+
+      const newPfpResult = await db.collection("membersPersonalInfo").updateOne({username},{$set:{pfpPath:pfpPath.secure_url}})
+      if (!newPfpResult.modifiedCount){
+        throw new Error("Could not update profile pic");
+      }
+    }
+
+    const result = await db
+      .collection("membersProfile")
+      .updateOne({ username }, {$set: updates} );
+
+     if (updates.username && updates.username !== username) {
+      const usernameResult = await db.collection("membersPersonalInfo").updateOne({username},{$set:{username:updates.username}})
+      if (!usernameResult.modifiedCount){
+        throw new Error("could not update username")
+      }
+    }  
+
+
+   
+    res.status(200).json({message:"successfully updated"});
+  } catch (error) {
+    console.error("Error updating profile", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
+// Adding pictures - DAVID
+app.put("/addPictures/:username",upload.single("picture"),async (req,res)=>{
+try {
+  const b64 = req.file.buffer.toString("base64");
+  const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+  const pfpPath = await cloudinary.uploader.upload(dataURI);
+  
+
+  const result = await db.collection("membersProfile").updateOne({username:req.params.username},{$push:{picsPaths: pfpPath.secure_url}})
+  if(result.modifiedCount){
+    res.status(200).json({message:"successfully updated"})
+  }else{
+    throw new Error("couldn't add picture")
+  }
+}catch(error){
+console.error("Error adding new pictures", error);
+res.status(500).json({ error: "Internal server error" });
+}
+})
+
+
+// Removing pictures - DAVID
+
+app.put("/removePicture/:username",async (req,res)=>{
+try {
+  const path = req.body.path
+  const result = await db.collection("membersProfile").updateOne({username:req.params.username},{$pull:{picsPaths: path}});
+
+  
+  if(result.modifiedCount){
+    res.status(200).json({message:"successfully updated"})
+  }else{
+    throw new Error("couldn't remove picture")
+  }
+
+
+}catch(error){
+console.error("Error adding new pictures", error);
+res.status(500).json({ error: "Internal server error" });
+}
+})
+
+
+
+//getting all connection requests recieved by user - NISSI
 app.get("/connectionRequests/:username", async (req, res) => {
   try {
     const username = req.params.username;
@@ -838,7 +586,7 @@ app.get("/connectionRequests/:username", async (req, res) => {
   }
 });
 
-// updating the hasAccepted and dataAccepted field when a user accepts a connection request - NISSI
+//updating the hasAccepted and dataAccepted field when a user accepts a connection request - NISSI
 app.put(
   "/acceptedConnectionRequest/:recieverUsername",
   async (req, res) => {
@@ -896,7 +644,7 @@ app.put(
   }
 );
 
-// when a user removes a member as a connection - NISSI
+//when a user removes a member as a connection - NISSI
 app.delete(
   "/removeConnectionRequest",
   async (req, res) => {
@@ -945,7 +693,7 @@ app.delete(
   }
 );
 
-// canceling a connection request - NISSI
+//canceling a connection request - NISSI
 app.delete(
   "/cancelConnectionRequest",
   async (req, res) => {
@@ -979,163 +727,29 @@ app.delete(
   }
 );
 
-// Notifications endpoints - NISSI
-app.post("/notifications", async (req, res) => {
-  try {
-    const { receiver_username, sender_username, type, content } = req.body;
-
-    const { data, error } = await supabase
-      .from("notifications")
-      .insert([{
-        receiver_username,
-        sender_username,
-        type,
-        content,
-        is_read: false,
-        created_at: new Date()
-      }])
-      .select();
-
-    if (error) throw error;
-
-    res.status(200).json({ message: "Notification created successfully", notification: data[0] });
-  } catch (error) {
-    console.error("Error creating notification", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-app.get("/notifications/:username", async (req, res) => {
+//getting messages recieved by a user - DAVID
+app.get("/messages/:username",async (req, res) => {
   try {
     const username = req.params.username;
+    const result = await db.collection("messages").find({$or:[{recieverId:username},{senderId:username}]}).toArray()
 
-    const { data, error } = await supabase
-      .from("notifications")
-      .select("*")
-      .eq("receiver_username", username)
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    res.status(200).json(data);
-  } catch (error) {
-    console.error("Error fetching notifications", error);
-    res.status(500).json({ message: "Internal server error" });
+    res.json(result)
+  }catch(error){
+     console.error("Error getting messages", error);
+    res.status(500).send({ message: "Internal server error" });
   }
 });
+ 
+//posting a new message - DAVID
+app.post("/sendAMessage",async (req, res) => {
+   try {
+    const username = req.params.username;
+    const result = await db.collection("messages").insertOne(req.body)
 
-app.put("/notifications/read/:id", async (req, res) => {
-  try {
-    const notificationId = req.params.id;
-
-    const { data, error } = await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("id", notificationId)
-      .select();
-
-    if (error) throw error;
-
-    res.status(200).json({ message: "Notification marked as read", notification: data[0] });
-  } catch (error) {
-    console.error("Error updating notification", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-app.delete("/notifications/:id", async (req, res) => {
-  try {
-    const notificationId = req.params.id;
-
-    const { data, error } = await supabase
-      .from("notifications")
-      .delete()
-      .eq("id", notificationId)
-      .select();
-
-    if (error) throw error;
-
-    res.status(200).json({ message: "Notification deleted successfully", notification: data[0] });
-  } catch (error) {
-    console.error("Error deleting notification", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-// To verify that email exists before doing the password reset thing - NISSI
-app.post("/check-email", async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ message: "Please provide an email" });
-    }
-
-    const { data: user, error } = await supabase
-      .from("membersPersonalInfo")
-      .select("email, user_name")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (error) throw error;
-
-    if (!user) {
-      return res.status(404).json({ message: "Email does not exist" });
-    }
-
-    res.status(200).json({ message: "Email verified", username: user.user_name });
-  } catch (error) {
-    console.error("Error checking email for reset", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-app.post("/reset-password", async (req, res) => {
-  try {
-    const { email, newPassword, confirmPassword } = req.body;
-
-    if (!email || !newPassword || !confirmPassword) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
-
-    if (
-      newPassword.match(/\d/g) == null ||
-      newPassword.match(/\D/g) == null ||
-      newPassword.match(/([\W]|_)/g) == null
-    ) {
-      return res.status(400).json({ message: "Password should include numbers, letters, and symbols" });
-    }
-
-    if (newPassword !== confirmPassword) {
-      return res.status(400).json({ message: "Passwords do not match" });
-    }
-
-    const encodedPassword = base64.encode(newPassword);
-
-    const { data, error } = await supabase
-      .from("membersPersonalInfo")
-      .update({ password: encodedPassword })
-      .eq("email", email)
-      .select("id, email, user_name, gender, full_name, age, pfp_path")
-      .single();
-
-    if (error) throw error;
-
-    res.status(200).json({
-      message: "Password successfully reset",
-      user: {
-        id: data.id,
-        email: data.email,
-        username: data.user_name,
-        gender: data.gender,
-        fullName: data.full_name,
-        age: data.age,
-        pfpPath: data.pfp_path
-      }
-    });
-  } catch (error) {
-    console.error("Error resetting password", error);
-    res.status(500).json({ message: "Internal server error" });
+    res.send(200).json({message:"successsfully sent"})
+  }catch(error){
+    console.error("Error sending messages", error); 
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
