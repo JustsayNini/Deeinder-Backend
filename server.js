@@ -372,6 +372,8 @@ app.post(
     }
   },
 );
+
+
 //updating number of likes when a user likes a members profile - DAVID
 app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
   try {
@@ -414,6 +416,23 @@ app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
     res.status(500).send({ message: "Internal server error" });
   }
 });
+
+//     const result = await memProfilesCol.updateOne(
+//       { username: member },
+//       { $push: { likes: liker } }
+//     );
+//     console.log("hehe ")
+
+//     if (result.modifiedCount === 1) {
+//       res.status(200).json({ message: "Successfully updated" });
+//     } else {
+//       throw new Error("Could not update number of likes");
+//     }
+//   } catch (error) {
+//     console.error("Error liking profile", error);
+//     res.status(500).send({ message: "Internal server error" });
+//   }
+// });
 
 //     const result = await memProfilesCol.updateOne(
 //       { username: member },
