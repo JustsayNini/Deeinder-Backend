@@ -855,7 +855,7 @@ app.get("/messages/:username", async (req, res) => {
   try {
     const username = req.params.username;
 
-    // UPDATED FOR COLUMN NAMES: maps to sender_id and receiver_id
+    //maps to sender_id and receiver_id
     const { data: result, error } = await supabase
       .from("messages")
       .select("*")
@@ -863,7 +863,7 @@ app.get("/messages/:username", async (req, res) => {
 
     if (error) throw error;
 
-    // Map database snake_case keys back to camelCase so your frontend doesn't break
+    //map database snake_case keys back to camelCase
     const mappedResult = result.map((msg) => ({
       id: msg.id,
       senderId: msg.sender_id,
@@ -890,7 +890,7 @@ app.get("/messages/:username", async (req, res) => {
 //posting a new message - DAVID
 app.post("/sendAMessage", async (req, res) => {
   try {
-    // UPDATED FOR COLUMN NAMES: maps incoming keys to exact Supabase columns
+    //maps incoming keys to exact Supabase columns
     const messagePayload = {
       sender_id: req.body.senderId,
       receiver_id: req.body.recieverId,
