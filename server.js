@@ -70,7 +70,7 @@ async function basicAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   
 
-  if (!authHeader || !authHeader.startsWith("basic ")) {
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
     res
     .status(401)
     .json({ message: "Authorization header missing or invalid" });
@@ -83,25 +83,28 @@ async function basicAuth(req, res, next) {
   const email = credentials[0];
   const password = credentials[1];
 
-  const usersDb = db.collection("membersPersonalInfo");
-  const user = await usersDb.findOne({ email });
+  const {data: user, error} = await supabase
+    .from("membersPersonalInfo")
+    .select("*")
+    .eq("email", email)
+    .single();
 
-  if (!user) {
+  if (error || !user) {
     res.status(401).json({ message: "User not found" });
-    throw new Error("User not found")
+    throw new Error("User not found");
   }
 
- 
-  if (user.password !== password) {
+  const decodedPassword = base64.decode(user.password);
+  if (decodedPassword !== password) {
     res.status(401).json({ message: "Incorrect Password" });
     throw new Error("Incorrect Password");
   }
+  
   req.user = user;
-
   res.status(200);
   next();
 }catch(e){
-  console.error("Error Basic Authorization",e)
+  console.error("Error Basic Authorization", e)
 }
 }
 
@@ -340,18 +343,23 @@ app.post(
       const senderUsername = req.params.senderUsername;
       const recieverUsername = req.params.recieverUsername;
 
-      const result = await db
-        .collection("connectionRequests")
-        .insertOne({
-          recieverUsername,
-          senderUsername,
-          dateSent: new Date(),
-          hasAccepted: false,
-          dateAccepted: null,
-        });
+      const { data: result, error } = await supabase
+        .from("connection_requests")
+        .insert([{
+          receiver_username: recieverUsername,
+          sender_username: senderUsername,
+          date_sent: new Date(),
+          has_accepted: false,
+          date_accepted: null,
+        }])
+        .select();
 
+        if (error) {
+          console.error("Supabase Error Details:", error);
+          return res.status(400).json({ message: error.message });
+        }
       
-      if (result) {
+      if (!error && result) {
         res.status(200).json({ message: "successfully sent request" });
       } else {
         throw new Error("could not send connection request");
@@ -514,16 +522,24 @@ app.get("/connectionRequests/:username", async (req, res) => {
   try { 
     const username = req.params.username;
 
-    const result = await db
-      .collection("connectionRequests")
-      .find(
-        { $or: [{ recieverUsername: username }, { senderUsername: username }] },
-        { projection: { dataAccepted: 0, dateSent: 0 } }
-      )
-      .toArray();
+    const { data: result, error } = await supabase
+      .from("connection_requests")
+      .select("id, receiver_username, sender_username, has_accepted")
+      .or(`receiver_username.eq.${username},sender_username.eq.${username}`);
 
-   
-    res.status(200).json(result); 
+    if (error) {
+      console.error("Supabase Error:", error);
+      return res.status(400).json({ message: error.message });
+    }
+
+    const formattedResult = result.map(reqItem => ({
+      id: reqItem.id,
+      recieverUsername: reqItem.receiver_username,
+      senderUsername: reqItem.sender_username,
+      hasAccepted: reqItem.has_accepted
+    }));
+
+    res.status(200).json(formattedResult); 
    
   } catch (error) {
     console.error("Error getting connection requests", error);
@@ -540,21 +556,50 @@ app.put(
       const senderUsername = req.body.senderUsername;
       const recieverUsername = req.params.recieverUsername;
 
-      const result = await db
-        .collection("connectionRequests")
-        .updateOne(
-          { senderUsername,recieverUsername },
-          { $set: { hasAccepted: true, dateAccepted: new Date() } }
-        );
+      console.log("Request Body:", req.body);
+      console.log("Sender:", senderUsername, "| Receiver:", recieverUsername);
 
-      
-      const updated = await db.collection("membersProfile").updateMany({$or:[{username:recieverUsername},{username:senderUsername}]},{$inc:{connections:1}})    
+      const { data: result, error: updateErr } = await supabase
+        .from("connection_requests")
+        .update({ has_accepted: true, date_accepted: new Date() })
+        .match({ sender_username: senderUsername, receiver_username: recieverUsername })
+        .select();
+
+      if (updateErr) console.error("Supabase Update Err:", updateErr);
+
+      const { data: profiles, error: fetchErr } = await supabase
+        .from("membersProfile")
+        .select("username, connections_count")
+        .or(`username.eq.${recieverUsername},username.eq.${senderUsername}`);
+
+      if (fetchErr || updateErr || !profiles) {
+        return res.status(400).json({ message: "Database query failed" });
+      }
+
+      let modifiedCount = 0;
+      for (const profile of profiles) {
+        const { error: incErr } = await supabase
+          .from("membersProfile")
+          .update({ connections_count: (profile.connections_count || 0) + 1 })
+          .eq("username", profile.username);
+
+        if (!incErr) modifiedCount++;
+        else console.error(`--> Failed updating counter for ${profile.username}:`, incErr);
+      }
+
+      if (modifiedCount > 0 && result && result.length > 0) {
+        const resData = result[0];
+        res.status(200).json({
+          id: resData.id,
+          senderUsername: resData.sender_username,
+          recieverUsername: resData.receiver_username,
+          hasAccepted: resData.has_accepted,
+          dateAccepted: resData.date_accepted
+        });
 
 
-      if (updated.modifiedCount > 1 && result.modifiedCount) {
-        res.status(200).json(result);
       } else {
-        throw new Error("Error accepting connection request");
+        return res.status(400).json({ message: "No matching connection request found to update" });
       }
     } catch (error) {
       console.error("Error accepting connection request", error);
@@ -572,13 +617,37 @@ app.delete(
       const recieverUsername = req.body.recieverUsername;
       console.log(req.body)
 
-      const deletedResult = await db
-        .collection("connectionRequests")
-        .deleteOne({ senderUsername, recieverUsername });
-  
-      const updatedResult = await db.collection("membersProfile").updateMany({$or:[{username:recieverUsername},{username:senderUsername}]},{$inc:{connections: -1}});
-      if (deletedResult.deletedCount && updatedResult.modifiedCount) {
-        res.status(200).json(deletedResult);
+      const { data: deletedResult, error: delErr } = await supabase
+        .from("connection_requests")
+        .delete()
+        .match({ sender_username: senderUsername, receiver_username: recieverUsername })
+        .select();
+
+      const { data: profiles, error: fetchErr } = await supabase
+        .from("membersProfile")
+        .select("username, connections_count")
+        .or(`username.eq.${recieverUsername},username.eq.${senderUsername}`);
+
+      if (delErr || fetchErr) throw new Error("Error removing connection");
+
+      let modifiedCount = 0;
+      for (const profile of profiles) {
+        const { error: decErr } = await supabase
+          .from("membersProfile")
+          .update({ connections_count: Math.max((profile.connections_count || 0) - 1, 0) })
+          .eq("username", profile.username);
+
+        if (!decErr) modifiedCount++;
+      }
+
+      if (deletedResult && deletedResult.length > 0 && modifiedCount) {
+        const delData = deletedResult[0];
+        res.status(200).json({
+          id: delData.id,
+          senderUsername: delData.sender_username,
+          recieverUsername: delData.receiver_username,
+          hasAccepted: delData.has_accepted
+        });
       } else {
         throw new Error("Error removing connection");
       }
@@ -597,11 +666,25 @@ app.delete(
       const senderUsername = req.body.senderUsername;
       const recieverUsername = req.body.recieverUsername;
 
-      const deletedResult = await db
-        .collection("connectionRequests")
-        .deleteOne({senderUsername, recieverUsername });
+      const { data: deletedResult, error } = await supabase
+        .from("connection_requests")
+        .delete()
+        .match({ sender_username: senderUsername, receiver_username: recieverUsername })
+        .select();
 
-      res.status(200).json(deletedResult);
+      if (error) throw error;
+
+      if (deletedResult && deletedResult.length > 0) {
+        const delData = deletedResult[0];
+        res.status(200).json({
+          id: delData.id,
+          senderUsername: delData.sender_username,
+          recieverUsername: delData.receiver_username,
+          hasAccepted: delData.has_accepted
+        });
+      } else {
+        res.status(200).json({});
+      }
 
     } catch (error) {
       console.error("Error cancelling connection request", error);
