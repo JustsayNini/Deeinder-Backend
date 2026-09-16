@@ -55,34 +55,42 @@ async function basicAuth(req, res, next) {
       throw new Error("Authorization header missing or invalid");
     }
 
-    const base64Credentials = authHeader.split(" ")[1];
-    const credentials = base64.decode(base64Credentials).split(":");
-    const email = credentials[0];
-    const password = credentials[1];
-
-    const { data: user, error } = await supabase
-      .from("membersPersonalInfo")
-      .select("*")
-      .eq("email", email)
-      .single();
-
-    if (error || !user) {
-      res.status(401).json({ message: "User not found" });
-      throw new Error("User not found");
-    }
-
-    const decodedPassword = base64.decode(user.password);
-    if (decodedPassword !== password) {
-      res.status(401).json({ message: "Incorrect Password" });
-      throw new Error("Incorrect Password");
-    }
-
-    req.user = user;
-    res.status(200);
-    next();
-  } catch (e) {
-    console.error("Error Basic Authorization", e);
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    res
+    .status(401)
+    .json({ message: "Authorization header missing or invalid" });
+    throw Error("Authorization header missing or invalid")
   }
+
+  const base64Credentials = authHeader.split(" ")[1];
+  
+  const credentials = base64.decode(base64Credentials).split(":");
+  const email = credentials[0];
+  const password = credentials[1];
+
+  const {data: user, error} = await supabase
+    .from("membersPersonalInfo")
+    .select("*")
+    .eq("email", email)
+    .single();
+
+  if (error || !user) {
+    res.status(401).json({ message: "User not found" });
+    throw new Error("User not found");
+  }
+
+  const decodedPassword = base64.decode(user.password);
+  if (decodedPassword !== password) {
+    res.status(401).json({ message: "Incorrect Password" });
+    throw new Error("Incorrect Password");
+  }
+  
+  req.user = user;
+  res.status(200);
+  next();
+}catch(e){
+  console.error("Error Basic Authorization", e)
+}
 }
 
 //signing up - DANIELLA
@@ -388,18 +396,23 @@ app.post(
       const senderUsername = req.params.senderUsername;
       const recieverUsername = req.params.recieverUsername;
 
-      const result = await db
-        .collection("connectionRequests")
-        .insertOne({
-          recieverUsername,
-          senderUsername,
-          dateSent: new Date(),
-          hasAccepted: false,
-          dateAccepted: null,
-        });
+      const { data: result, error } = await supabase
+        .from("connection_requests")
+        .insert([{
+          receiver_username: recieverUsername,
+          sender_username: senderUsername,
+          date_sent: new Date(),
+          has_accepted: false,
+          date_accepted: null,
+        }])
+        .select();
 
+        if (error) {
+          console.error("Supabase Error Details:", error);
+          return res.status(400).json({ message: error.message });
+        }
       
-      if (result) {
+      if (!error && result) {
         res.status(200).json({ message: "successfully sent request" });
       } else {
         throw new Error("could not send connection request");
@@ -579,7 +592,8 @@ app.get("/connectionRequests/:username", async (req, res) => {
       hasAccepted: reqItem.has_accepted
     }));
 
-    res.status(200).json(formattedResult);
+    res.status(200).json(formattedResult); 
+   
   } catch (error) {
     console.error("Error getting connection requests", error);
     res.status(500).send({ message: "Internal server error" });
@@ -634,6 +648,9 @@ app.put(
           hasAccepted: resData.has_accepted,
           dateAccepted: resData.date_accepted
         });
+
+      if (updateErr) console.error("Supabase Update Err:", updateErr);
+
       } else {
         return res.status(400).json({ message: "No matching connection request found to update" });
       }
@@ -708,6 +725,18 @@ app.delete(
         .select();
 
       if (error) throw error;
+
+      if (deletedResult && deletedResult.length > 0) {
+        const delData = deletedResult[0];
+        res.status(200).json({
+          id: delData.id,
+          senderUsername: delData.sender_username,
+          recieverUsername: delData.receiver_username,
+          hasAccepted: delData.has_accepted
+        });
+      } else {
+        res.status(200).json({});
+      }
 
       if (deletedResult && deletedResult.length > 0) {
         const delData = deletedResult[0];
