@@ -719,6 +719,90 @@ app.post("/sendAMessage",async (req, res) => {
   }
 });
 
+app.post("/notifications", async (req, res) => {
+  try {
+    const { receiver_username, sender_username, type, content } = req.body;
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .insert([{
+        receiver_username,
+        sender_username,
+        type,
+        content,
+        is_read: false,
+        created_at: new Date()
+      }])
+      .select();
+
+    if (error) throw error;
+
+    res.status(200).json({ message: "Notification created successfully", notification: data[0] });
+  } catch (error) {
+
+    console.error("Error creating notification", error);
+    res.status(500).json({ message: "Internal server error" });
+
+  }
+});
+
+app.get("/notifications/:username", async (req, res) => {
+  try {
+    const username = req.params.username;
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("receiver_username", username)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    res.status(200).json(data);
+  } catch (error) {
+    console.error("Error fetching notifications", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.put("/notifications/read/:id", async (req, res) => {
+  try {
+    const notificationId = req.params.id;
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("id", notificationId)
+      .select();
+
+    if (error) throw error;
+
+    res.status(200).json({ message: "Notification marked as read", notification: data[0] });
+  } catch (error) {
+    console.error("Error updating notification", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.delete("/notifications/:id", async (req, res) => {
+  try {
+    const notificationId = req.params.id;
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .delete()
+      .eq("id", notificationId)
+      .select();
+
+    if (error) throw error;
+
+    res.status(200).json({ message: "Notification deleted successfully", notification: data[0] });
+  } catch (error) {
+    console.error("Error deleting notification", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 server.listen(port, async () => {
   console.log(`Server is running on http://localhost:${port}`);
   await connectToMongo();
