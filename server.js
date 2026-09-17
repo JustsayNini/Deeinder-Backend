@@ -93,6 +93,12 @@ async function basicAuth(req, res, next) {
 }
 }
 
+// -------------------------------------------------------------------------------------------------------
+// 
+// DANIELLA'S ENDPOINTS
+//
+//--------------------------------------------------------------------------------------------------------
+
 //signing up - DANIELLA
 app.post("/signUp", upload.single("pfp"), async (req, res) => {
   let status = 500;
@@ -237,7 +243,7 @@ app.post("/signUp", upload.single("pfp"), async (req, res) => {
   }
 });
 
-//logging in (checking password and email) - DANIELLA
+//logging in - DANIELLA
 app.post("/login", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -287,7 +293,11 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// Upload profile picture endpoint - DANIELLA
+
+// Basic auth for all endpoints from here on out
+app.use(basicAuth);
+
+// IDK what this is for yet
 app.post("/UploadPfp", upload.single("pfp"), async (req, res) => {
   res.status(200).json(req.file);
 });
@@ -332,7 +342,7 @@ app.get("/membersProfiles", async (req, res) => {
   }
 });
 
-//getiing a single profile - DANIELLA
+//getting a single profile - DANIELLA
 app.get("/memberProfile/:username", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -382,6 +392,242 @@ app.get("/memberProfile/:username", async (req, res) => {
   }
 });
 
+
+
+// -------------------------------------------------------------------------------------------------------
+// 
+// DAVID'S ENDPOINTS
+//
+//--------------------------------------------------------------------------------------------------------
+
+
+
+//updating number of likes when a user likes a members profile - DAVID
+app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
+  try {
+    const member = req.params.memberUsername;
+    const liker = req.params.likerUsername;
+
+    // 1. Fetch the profile row from Supabase
+    const { data: profile } = await supabase
+      .from("membersProfile")
+      .select("likes")
+      .eq("username", member)
+      .single();
+
+    // FIXED: Prevent "Cannot read properties of null" crash if profile name doesn't exist
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    // UPDATED FOR TEXT ARRAY: Grab array data directly. Fall back to clean array if null.
+    const updatedLikes = profile.likes || [];
+
+    // Prevent duplicate entries in your array if the user double-clicks like
+    if (!updatedLikes.includes(liker)) {
+      updatedLikes.push(liker);
+    }
+
+    // 3. Update the row back in Supabase (saving as a true array object payload)
+    const { error } = await supabase
+      .from("membersProfile")
+      .update({ likes: updatedLikes })
+      .eq("username", member);
+
+    if (!error) {
+      res.status(200).json({ message: "Successfully updated" });
+    } else {
+      throw new Error("Could not update number of likes");
+    }
+  } catch (error) {
+    console.error("Error liking profile", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
+
+
+//updating number of likes when a user dislikes a members profile - DAVID
+app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
+  try {
+    const member = req.params.memberUsername;
+    const liker = req.params.likerUsername;
+
+    // 1. Fetch the profile row from Supabase
+    const { data: profile } = await supabase
+      .from("membersProfile")
+      .select("likes")
+      .eq("username", member)
+      .single();
+
+    // FIXED: Prevent crash if profile name doesn't exist
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    // UPDATED FOR TEXT ARRAY: Read directly as array structure
+    const currentLikes = profile.likes || [];
+    const updatedLikes = currentLikes.filter((item) => item !== liker);
+
+    // 3. Update the row back in Supabase
+    const { error } = await supabase
+      .from("membersProfile")
+      .update({ likes: updatedLikes })
+      .eq("username", member);
+
+    if (!error) {
+      res.status(200).json({ message: "successfully disliked profile" });
+    } else {
+      throw new Error("Could not update number of likes");
+    }
+  } catch (error) {
+    console.error("Error disliking profile", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
+
+
+// Adding pictures - DAVID
+app.put(
+  "/addPictures/:username",
+  upload.single("picture"),
+  async (req, res) => {
+    try {
+      const b64 = req.file.buffer.toString("base64");
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      const pfpPath = await cloudinary.uploader.upload(dataURI);
+
+      // 1. Fetch the profile row from Supabase
+      const { data: profile } = await supabase
+        .from("membersProfile")
+        .select("pics_paths") // UPDATED: Match your schema's pics_paths column
+        .eq("username", req.params.username)
+        .single();
+
+      if (!profile) {
+        return res.status(404).json({ message: "Profile not found" });
+      }
+
+      // 2. Push the new Cloudinary URL into the array
+      const updatedPics = profile.pics_paths || []; // UPDATED: Match your column name
+      updatedPics.push(pfpPath.secure_url);
+
+      // 3. Update the row back in Supabase
+      const { error } = await supabase
+        .from("membersProfile")
+        .update({ pics_paths: updatedPics }) // UPDATED: Match your column name
+        .eq("username", req.params.username);
+
+      if (!error) {
+        res.status(200).json({ message: "successfully updated" });
+      } else {
+        throw new Error("couldn't add picture");
+      }
+    } catch (error) {
+      console.error("Error adding new pictures", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// Removing pictures - DAVID
+app.put("/removePicture/:username", async (req, res) => {
+  try {
+    const path = req.body.path;
+
+    // 1. Fetch the profile row from Supabase
+    const { data: profile } = await supabase
+      .from("membersProfile")
+      .select("pics_paths") // UPDATED: Match your schema's pics_paths column
+      .eq("username", req.params.username)
+      .single();
+
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    // 2. Filter out (pull) the specific image path from the array
+    const currentPics = profile.pics_paths || []; // UPDATED: Match your column name
+    const updatedPics = currentPics.filter((item) => item !== path);
+
+    // 3. Update the row back in Supabase
+    const { error } = await supabase
+      .from("membersProfile")
+      .update({ pics_paths: updatedPics }) // UPDATED: Match your column name
+      .eq("username", req.params.username);
+
+    if (!error) {
+      res.status(200).json({ message: "successfully removed picture" });
+    } else {
+      throw new Error("couldn't remove picture");
+    }
+  } catch (error) {
+    console.error("Error adding new pictures", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
+//posting a new message - DAVID
+app.post("/sendAMessage", async (req, res) => {
+  try {
+    //maps incoming keys to exact Supabase columns
+    const messagePayload = {
+      sender_id: req.body.senderId,
+      receiver_id: req.body.recieverId,
+      message: req.body.content,
+      room: req.body.room || null,
+    };
+
+    const { error } = await supabase.from("messages").insert([messagePayload]);
+
+    if (error) throw error;
+
+    res.status(200).json({ message: "successsfully sent" });
+  } catch (error) {
+    console.error("Error sending messages", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});                                            
+
+//getting messages recieved by a user - DAVID
+app.get("/messages/:username", async (req, res) => {
+  try {
+    const username = req.params.username;
+
+    //maps to sender_id and receiver_id
+    const { data: result, error } = await supabase
+      .from("messages")
+      .select("*")
+      .or(`receiver_id.eq.${username},sender_id.eq.${username}`);
+
+    if (error) throw error;
+
+    //map database snake_case keys back to camelCase
+    const mappedResult = result.map((msg) => ({
+      id: msg.id,
+      senderId: msg.sender_id,
+      recieverId: msg.receiver_id,
+      room: msg.room,
+      content: msg.message,
+      created_at: msg.created_at,
+    }));
+
+    res.json(mappedResult);
+  } catch (error) {
+    console.error("Error getting messages", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
+
+
+
+// -------------------------------------------------------------------------------------------------------
+// 
+// NISSI'S ENDPOINTS
+//
+//--------------------------------------------------------------------------------------------------------
+
+
 //creating a new connection request when someone sends it - NISSI
 app.post(
   "/connectionRequest/:senderUsername/:recieverUsername",
@@ -423,152 +669,6 @@ app.post(
     }
   }
 );
-
-//updating number of likes when a user likes a members profile - DAVID
-app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
-  try {
-    const memProfilesCol = db.collection("membersProfile");
-    const member = req.params.memberUsername;
-    const liker = req.params.likerUsername;
-
-    const result = await memProfilesCol.updateOne(
-      { username: member },
-      { $push: { likes: liker } }
-    );
-    console.log("hehe ")
-
-    if (result.modifiedCount === 1) {
-      res.status(200).json({ message: "Successfully updated" });
-    } else {
-      throw new Error("Could not update number of likes");
-    }
-  } catch (error) {
-    console.error("Error liking profile", error);
-    res.status(500).send({ message: "Internal server error" });
-  }
-});
-
-//updating number of likes when a user dislikes a members profile - DAVID
-app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
-  try {
-    const memProfilesCol = db.collection("membersProfile");
-    const member = req.params.memberUsername;
-    const liker = req.params.likerUsername;
-
-    const result = await memProfilesCol.updateOne(
-      { username: member },
-      { $pull: { likes: liker } }
-    );
-
-    if (result.modifiedCount === 1) {
-      res.status(200).json({ message: "successfully liked profile" });
-    } else {
-      throw new Error("Could not update number of likes");
-    }
-  } catch (error) {
-    console.error("Error disliking profile", error);
-    res.status(500).send({ mesNsage: "Internal server error" });
-  }
-});
-
-
-//updating profile data when user wants to edit thier profile - DANIELLA
-app.put("/UpdatemembersPersonalInfo/:username",upload.single("pfp"), async (req, res) => {
-  let status = 500;
-  let message = "Internal server error";
-  const invalid = () => {
-    status = 400;
-    message = "Invalid input";
-  };
-  try {
-    const updates = JSON.parse(req.body.updates);
-    const username = req.params.username;
-
-    if (updates.username && updates.username !== username) {
-      const newUsername = updates.username;
-      if (
-        await db.collection("membersProfile").findOne({ username: newUsername })
-      ) {
-        invalid();
-        throw new Error("Username already exists");
-      } 
-    }
-
-    if (req.file){
-    const b64 = req.file.buffer.toString("base64");
-    const dataURI = `data:${req.file.mimetype};base64,${b64}`;
-    const pfpPath = await cloudinary.uploader.upload(dataURI);
-
-      const newPfpResult = await db.collection("membersPersonalInfo").updateOne({username},{$set:{pfpPath:pfpPath.secure_url}})
-      if (!newPfpResult.modifiedCount){
-        throw new Error("Could not update profile pic");
-      }
-    }
-
-    const result = await db
-      .collection("membersProfile")
-      .updateOne({ username }, {$set: updates} );
-
-     if (updates.username && updates.username !== username) {
-      const usernameResult = await db.collection("membersPersonalInfo").updateOne({username},{$set:{username:updates.username}})
-      if (!usernameResult.modifiedCount){
-        throw new Error("could not update username")
-      }
-    }  
-
-
-   
-    res.status(200).json({message:"successfully updated"});
-  } catch (error) {
-    console.error("Error updating profile", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-
-// Adding pictures - DAVID
-app.put("/addPictures/:username",upload.single("picture"),async (req,res)=>{
-try {
-  const b64 = req.file.buffer.toString("base64");
-  const dataURI = `data:${req.file.mimetype};base64,${b64}`;
-  const pfpPath = await cloudinary.uploader.upload(dataURI);
-  
-
-  const result = await db.collection("membersProfile").updateOne({username:req.params.username},{$push:{picsPaths: pfpPath.secure_url}})
-  if(result.modifiedCount){
-    res.status(200).json({message:"successfully updated"})
-  }else{
-    throw new Error("couldn't add picture")
-  }
-}catch(error){
-console.error("Error adding new pictures", error);
-res.status(500).json({ error: "Internal server error" });
-}
-})
-
-
-// Removing pictures - DAVID
-
-app.put("/removePicture/:username",async (req,res)=>{
-try {
-  const path = req.body.path
-  const result = await db.collection("membersProfile").updateOne({username:req.params.username},{$pull:{picsPaths: path}});
-
-  
-  if(result.modifiedCount){
-    res.status(200).json({message:"successfully updated"})
-  }else{
-    throw new Error("couldn't remove picture")
-  }
-
-
-}catch(error){
-console.error("Error adding new pictures", error);
-res.status(500).json({ error: "Internal server error" });
-}
-})
-
-
 
 //getting all connection requests recieved by user - NISSI
 app.get("/connectionRequests/:username", async (req, res) => {
@@ -756,31 +856,6 @@ app.delete(
   }
 );
 
-//getting messages recieved by a user - DAVID
-app.get("/messages/:username",async (req, res) => {
-  try {
-    const username = req.params.username;
-    const result = await db.collection("messages").find({$or:[{recieverId:username},{senderId:username}]}).toArray()
-
-    res.json(result)
-  }catch(error){
-     console.error("Error getting messages", error);
-    res.status(500).send({ message: "Internal server error" });
-  }
-});
- 
-//posting a new message - DAVID
-app.post("/sendAMessage",async (req, res) => {
-   try {
-    const username = req.params.username;
-    const result = await db.collection("messages").insertOne(req.body)
-
-    res.send(200).json({message:"successsfully sent"})
-  }catch(error){
-    console.error("Error sending messages", error); 
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
 
 app.post("/notifications", async (req, res) => {
   try {
