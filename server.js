@@ -939,3 +939,87 @@ app.delete("/notifications/:id", async (req, res) => {
   }
 });
 
+
+//To verify that email exists before doing the password reset thing - NISSI
+app.post("/check-email", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: "Please provide an email" });
+    }
+
+    const { data: user, error } = await supabase
+      .from("membersPersonalInfo")
+      .select("email, user_name")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!user) {
+      return res.status(404).json({ message: "Email does not exist" });
+    }
+
+    res.status(200).json({ message: "Email verified", username: user.user_name });
+  } catch (error) {
+    console.error("Error checking email for reset", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+
+app.post("/reset-password", async (req, res) => {
+
+  try {
+    const { email, newPassword, confirmPassword } = req.body;
+
+    if (!email || !newPassword || !confirmPassword) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (
+      newPassword.match(/\d/g) == null ||
+      newPassword.match(/\D/g) == null ||
+      newPassword.match(/([\W]|_)/g) == null
+    ) {
+      return res.status(400).json({ message: "Password should include numbers, letters, and symbols" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+
+    const encodedPassword = base64.encode(newPassword);
+
+    const { data, error } = await supabase
+      .from("membersPersonalInfo")
+      .update({ password: encodedPassword })
+      .eq("email", email)
+      .select("id, email, user_name, gender, full_name, age, pfp_path")
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json({
+      message: "Password successfully reset",
+      user: {
+        id: data.id,
+        email: data.email,
+        username: data.user_name,
+        gender: data.gender,
+        fullName: data.full_name,
+        age: data.age,
+        pfpPath: data.pfp_path
+      }
+    });
+  } catch (error) {
+    console.error("Error resetting password", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+server.listen(port, async () => {
+  console.log(`Server is running on http://localhost:${port}`);
+  await connectToMongo();
+});
