@@ -854,7 +854,7 @@ app.delete(
   }
 );
 
-
+//Notifications endpoints - NISSI
 app.post("/notifications", async (req, res) => {
   try {
     const { receiver_username, sender_username, type, content } = req.body;
