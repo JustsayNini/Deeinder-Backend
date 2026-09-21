@@ -1,0 +1,12 @@
+[
+  {
+    "weights": [
+      {
+        "name": "ssd_mobilenet_v1/box_predictor/box_encodings_clip_to_window/clip_to_window",
+        "shape": [],
+        "dtype": "bool"
+      }
+    ],
+    "paths": ["ssd_mobilenetv1_model-shard1"]
+  }
+]

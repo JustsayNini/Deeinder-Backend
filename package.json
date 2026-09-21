@@ -1,8 +1,16 @@
 {
+  "name": "deeinder-backend",
+  "version": "1.0.0",
+  "description": "Deeinder Backend",
+  "main": "server.js",
   "proxy": "http://localhost:8000",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
-    "axios": "^1.9.0",
+    "axios": "^1.20.0",
     "base-64": "^1.0.0",
     "body-parser": "^2.2.0",
     "cloudinary": "^2.7.0",
