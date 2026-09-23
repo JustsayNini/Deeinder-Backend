@@ -2,61 +2,72 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const mongoDb = require("mongodb");
-const app = express();
 const base64 = require("base-64");
-const port = process.env.port || 8000;
-const uri = process.env.MONGODB_DEEINDER;
 const cors = require("cors");
-const supabase = require('./supabase_db.js');
-
 const http = require("http");
-const {Server} = require("socket.io");
-const server = http.createServer(app);
-const io = new Server (
-  server,{
-  cors: {
-    origin: [
-      "https://deeinder-frontend.vercel.app", 
-      "http://localhost:3000"
-    ]
-  }
-}
-)
-
-io.on("connection",(socket)=>{
-  socket.on("join_room",(data)=>{
-    socket.join(data)
-  })
-
-  socket.on("send_message",(data)=>{
-    socket.to(data.room).emit("recieve_message",data)
-  })
-
-  socket.on("disconnect",()=>{
-    // console.log("User disconnected",socket.id)
-  })
-})
-
+const { Server } = require("socket.io");
 const multer = require("multer");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
-const { send } = require("process");
-const {v2:cloudinary} = require("cloudinary");
-const { error } = require("console");
+const { v2: cloudinary } = require("cloudinary");
+const axios = require("axios");
+const supabase = require("./supabase_db.js");
 
+const app = express();
+const port = process.env.PORT || process.env.port || 8000;
+const uri = process.env.MONGODB_DEEINDER;
 
+// -------------------------------------------------------------------------------------------------------
+// SERVER & SOCKET.IO SETUP
+// -------------------------------------------------------------------------------------------------------
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: [
+      "https://deeinder-frontend.vercel.app",
+      "http://localhost:3000"
+    ]
+  }
+});
+
+io.on("connection", (socket) => {
+  socket.on("join_room", (data) => {
+    socket.join(data);
+  });
+
+  socket.on("send_message", (data) => {
+    socket.to(data.room).emit("recieve_message", data);
+  });
+
+  socket.on("disconnect", () => {
+    // console.log("User disconnected", socket.id);
+  });
+});
+
+// -------------------------------------------------------------------------------------------------------
+// CLOUDINARY & MULTER CONFIGURATION
+// -------------------------------------------------------------------------------------------------------
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.CLOUD_API_KEY,
-  api_secret: process.env.CLOUD_API_SECRET,
-})
-const upload = multer({ storage: multer.memoryStorage() });
-app.use("/uploads", express.static("uploads"));
+  api_secret: process.env.CLOUD_API_SECRET
+});
 
+const upload = multer({ storage: multer.memoryStorage() });
+
+// -------------------------------------------------------------------------------------------------------
+// MIDDLEWARE CONFIGURATION
+// -------------------------------------------------------------------------------------------------------
+app.use("/uploads", express.static("uploads"));
 app.use(cors());
 app.use(express.json());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
+// -------------------------------------------------------------------------------------------------------
+// DATABASE CONNECTIONS & AUTHENTICATION
+// -------------------------------------------------------------------------------------------------------
 let client, db;
 
 async function connectToMongo() {
@@ -67,57 +78,364 @@ async function connectToMongo() {
 }
 
 async function basicAuth(req, res, next) {
-  try{
+  try {
+    const authHeader = req.headers.authorization;
 
-  
-  const authHeader = req.headers.authorization;
-  
+    if (!authHeader || !authHeader.startsWith("Basic ")) {
+      res
+        .status(401)
+        .json({ message: "Authorization header missing or invalid" });
+      throw new Error("Authorization header missing or invalid");
+    }
 
-  if (!authHeader || !authHeader.startsWith("Basic ")) {
-    res
-    .status(401)
-    .json({ message: "Authorization header missing or invalid" });
-    throw Error("Authorization header missing or invalid")
+    const base64Credentials = authHeader.split(" ")[1];
+    const credentials = base64.decode(base64Credentials).split(":");
+    const email = credentials[0];
+    const password = credentials[1];
+
+    const { data: user, error } = await supabase
+      .from("membersPersonalInfo")
+      .select("*")
+      .eq("email", email)
+      .single();
+
+    if (error || !user) {
+      res.status(401).json({ message: "User not found" });
+      throw new Error("User not found");
+    }
+
+    const decodedPassword = base64.decode(user.password);
+    if (decodedPassword !== password) {
+      res.status(401).json({ message: "Incorrect Password" });
+      throw new Error("Incorrect Password");
+    }
+
+    req.user = user;
+    res.status(200);
+    next();
+  } catch (e) {
+    console.error("Error Basic Authorization", e);
   }
-
-  const base64Credentials = authHeader.split(" ")[1];
-  
-  const credentials = base64.decode(base64Credentials).split(":");
-  const email = credentials[0];
-  const password = credentials[1];
-
-  const {data: user, error} = await supabase
-    .from("membersPersonalInfo")
-    .select("*")
-    .eq("email", email)
-    .single();
-
-  if (error || !user) {
-    res.status(401).json({ message: "User not found" });
-    throw new Error("User not found");
-  }
-
-  const decodedPassword = base64.decode(user.password);
-  if (decodedPassword !== password) {
-    res.status(401).json({ message: "Incorrect Password" });
-    throw new Error("Incorrect Password");
-  }
-  
-  req.user = user;
-  res.status(200);
-  next();
-}catch(e){
-  console.error("Error Basic Authorization", e)
 }
+
+// -------------------------------------------------------------------------------------------------------
+// 
+// DAVID'S WORK & HELPER FUNCTIONS
+//
+// -------------------------------------------------------------------------------------------------------
+
+// EXTERNAL FACE DETECTION AI - DAVID
+async function verifyProfilePicture(fileBuffer) {
+  try {
+    const base64Image = fileBuffer.toString("base64");
+
+    const formData = new URLSearchParams();
+    formData.append("api_key", process.env.FACE_AI_KEY);
+    formData.append("api_secret", process.env.FACE_AI_SECRET);
+    formData.append("image_base64", base64Image);
+    formData.append("return_attributes", "blur");
+
+    const response = await axios.post("https://faceplusplus.com", formData, {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    });
+
+    if (!response.data.faces || response.data.faces.length === 0) {
+      return {
+        isValid: false,
+        message:
+          "Animated or non-real facial images are not allowed. Please upload a proper facial image.",
+      };
+    }
+
+    return { isValid: true };
+  } catch (err) {
+    if (err.response && err.response.data) {
+      console.error("Cloud Face AI Rejection Detail:", err.response.data);
+    } else {
+      console.error("Cloud Face AI communication network error:", err.message);
+    }
+
+    return {
+      isValid: false,
+      message: "Error validating your facial image profile picture.",
+    };
+  }
 }
+
+// updating number of likes when a user likes a members profile - DAVID
+app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
+  try {
+    const member = req.params.memberUsername;
+    const liker = req.params.likerUsername;
+
+    const { data: profile } = await supabase
+      .from("membersProfile")
+      .select("likes")
+      .eq("username", member)
+      .single();
+
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    const updatedLikes = profile.likes || [];
+
+    if (!updatedLikes.includes(liker)) {
+      updatedLikes.push(liker);
+    }
+
+    const { error } = await supabase
+      .from("membersProfile")
+      .update({ likes: updatedLikes })
+      .eq("username", member);
+
+    if (!error) {
+      res.status(200).json({ message: "Successfully updated" });
+    } else {
+      throw new Error("Could not update number of likes");
+    }
+  } catch (error) {
+    console.error("Error liking profile", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
+
+// updating number of likes when a user dislikes a members profile - DAVID
+app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
+  try {
+    const member = req.params.memberUsername;
+    const liker = req.params.likerUsername;
+
+    const { data: profile } = await supabase
+      .from("membersProfile")
+      .select("likes")
+      .eq("username", member)
+      .single();
+
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    const currentLikes = profile.likes || [];
+    const updatedLikes = currentLikes.filter((item) => item !== liker);
+
+    const { error } = await supabase
+      .from("membersProfile")
+      .update({ likes: updatedLikes })
+      .eq("username", member);
+
+    if (!error) {
+      res.status(200).json({ message: "successfully disliked profile" });
+    } else {
+      throw new Error("Could not update number of likes");
+    }
+  } catch (error) {
+    console.error("Error disliking profile", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
+
+// updating profile data when user wants to edit their profile - DAVID
+app.put("/UpdatemembersPersonalInfo/:username", upload.single("pfp"), async (req, res) => {
+  let status = 500;
+  let message = "Internal server error";
+  const invalid = (m) => {
+    status = 400;
+    message = m || "Invalid input";
+  };
+  try {
+    const updates = req.body.updates ? JSON.parse(req.body.updates) : {};
+    const username = req.params.username;
+
+    if (updates.username && updates.username !== username) {
+      const newUsername = updates.username;
+      const { data: existingUser } = await supabase
+        .from("membersPersonalInfo")
+        .select("id")
+        .eq("user_name", newUsername)
+        .maybeSingle();
+
+      if (existingUser) {
+        invalid("Username already exists");
+        throw new Error("Username already exists");
+      }
+    }
+
+    let pfpUrl;
+    if (req.file) {
+      const b64 = req.file.buffer.toString("base64");
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      const uploadRes = await cloudinary.uploader.upload(dataURI);
+      pfpUrl = uploadRes.secure_url;
+    }
+
+    const personalUpdates = {};
+    if (updates.fullName) personalUpdates.full_name = updates.fullName;
+    if (updates.username) personalUpdates.user_name = updates.username;
+    if (pfpUrl) personalUpdates.pfp_path = pfpUrl;
+
+    if (Object.keys(personalUpdates).length > 0) {
+      const { error: personalErr } = await supabase
+        .from("membersPersonalInfo")
+        .update(personalUpdates)
+        .eq("user_name", username);
+      if (personalErr) throw personalErr;
+    }
+
+    const profileUpdates = {};
+    if (updates.relationshipIntent !== undefined) profileUpdates.relationship_intent = updates.relationshipIntent;
+    if (updates.shortDescription !== undefined) profileUpdates.short_description = updates.shortDescription;
+    if (updates.interests !== undefined) profileUpdates.interests = updates.interests;
+    if (updates.aboutMe !== undefined) profileUpdates.about_me = updates.aboutMe;
+
+    if (Object.keys(profileUpdates).length > 0) {
+      const { error: profileErr } = await supabase
+        .from("membersProfile")
+        .update(profileUpdates)
+        .eq("username", username);
+      if (profileErr) throw profileErr;
+    }
+
+    res.status(200).json({ message: "Profile updated successfully" });
+  } catch (error) {
+    console.error("Error updating member info", error);
+    res.status(status).json({ message });
+  }
+});
+
+// Adding pictures - DAVID
+app.put(
+  "/addPictures/:username",
+  upload.single("picture"),
+  async (req, res) => {
+    try {
+      const b64 = req.file.buffer.toString("base64");
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      const pfpPath = await cloudinary.uploader.upload(dataURI);
+
+      const { data: profile } = await supabase
+        .from("membersProfile")
+        .select("pics_paths")
+        .eq("username", req.params.username)
+        .single();
+
+      if (!profile) {
+        return res.status(404).json({ message: "Profile not found" });
+      }
+
+      const updatedPics = profile.pics_paths || [];
+      updatedPics.push(pfpPath.secure_url);
+
+      const { error } = await supabase
+        .from("membersProfile")
+        .update({ pics_paths: updatedPics })
+        .eq("username", req.params.username);
+
+      if (!error) {
+        res.status(200).json({ message: "successfully updated" });
+      } else {
+        throw new Error("couldn't add picture");
+      }
+    } catch (error) {
+      console.error("Error adding new pictures", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// Removing pictures - DAVID
+app.put("/removePicture/:username", async (req, res) => {
+  try {
+    const path = req.body.path;
+
+    const { data: profile } = await supabase
+      .from("membersProfile")
+      .select("pics_paths")
+      .eq("username", req.params.username)
+      .single();
+
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    const currentPics = profile.pics_paths || [];
+    const updatedPics = currentPics.filter((item) => item !== path);
+
+    const { error } = await supabase
+      .from("membersProfile")
+      .update({ pics_paths: updatedPics })
+      .eq("username", req.params.username);
+
+    if (!error) {
+      res.status(200).json({ message: "successfully removed picture" });
+    } else {
+      throw new Error("couldn't remove picture");
+    }
+  } catch (error) {
+    console.error("Error removing picture", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// posting a new message - DAVID
+app.post("/sendAMessage", async (req, res) => {
+  try {
+    const messagePayload = {
+      sender_id: req.body.senderId,
+      receiver_id: req.body.recieverId,
+      message: req.body.content,
+      room: req.body.room || null,
+    };
+
+    const { error } = await supabase.from("messages").insert([messagePayload]);
+
+    if (error) throw error;
+
+    res.status(200).json({ message: "successsfully sent" });
+  } catch (error) {
+    console.error("Error sending messages", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// getting messages recieved by a user - DAVID
+app.get("/messages/:username", async (req, res) => {
+  try {
+    const username = req.params.username;
+
+    const { data: result, error } = await supabase
+      .from("messages")
+      .select("*")
+      .or(`receiver_id.eq.${username},sender_id.eq.${username}`);
+
+    if (error) throw error;
+
+    const mappedResult = result.map((msg) => ({
+      id: msg.id,
+      senderId: msg.sender_id,
+      recieverId: msg.receiver_id,
+      room: msg.room,
+      content: msg.message,
+      created_at: msg.created_at,
+    }));
+
+    res.json(mappedResult);
+  } catch (error) {
+    console.error("Error getting messages", error);
+    res.status(500).send({ message: "Internal server error" });
+  }
+});
+
 
 // -------------------------------------------------------------------------------------------------------
 // 
 // DANIELLA'S ENDPOINTS
 //
-//--------------------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------------
 
-//signing up - DANIELLA
+// signing up - DANIELLA
 app.post("/signUp", upload.single("pfp"), async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -134,6 +452,13 @@ app.post("/signUp", upload.single("pfp"), async (req, res) => {
     if (!req.file) {
       invalid("Please upload a profile picture");
       throw new Error("Please upload a profile picture");
+    }
+
+    // Call Face AI verification helper
+    const faceCheck = await verifyProfilePicture(req.file.buffer);
+    if (!faceCheck.isValid) {
+      invalid(faceCheck.message);
+      throw new Error(faceCheck.message);
     }
 
     const b64 = req.file.buffer.toString("base64");
@@ -254,7 +579,7 @@ app.post("/signUp", upload.single("pfp"), async (req, res) => {
   }
 });
 
-//logging in - DANIELLA
+// logging in - DANIELLA
 app.post("/login", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -304,16 +629,12 @@ app.post("/login", async (req, res) => {
   }
 });
 
-
-// Basic auth for all endpoints from here on out
-// app.use(basicAuth);
-
-// IDK what this is for yet
+// Upload profile picture endpoint - DANIELLA
 app.post("/UploadPfp", upload.single("pfp"), async (req, res) => {
   res.status(200).json(req.file);
 });
 
-//getting all members profiles to display on home page - DANIELLA
+// getting all members profiles to display on home page - DANIELLA
 app.get("/membersProfiles", async (req, res) => {
   try {
     const { data: profiles, error: profileErr } = await supabase
@@ -353,7 +674,7 @@ app.get("/membersProfiles", async (req, res) => {
   }
 });
 
-//getting a single profile - DANIELLA
+// getting a single profile - DANIELLA
 app.get("/memberProfile/:username", async (req, res) => {
   let status = 500;
   let message = "Internal server error";
@@ -403,252 +724,59 @@ app.get("/memberProfile/:username", async (req, res) => {
   }
 });
 
-
-
-// -------------------------------------------------------------------------------------------------------
-// 
-// DAVID'S ENDPOINTS
-//
-//--------------------------------------------------------------------------------------------------------
-
-
-
-//updating number of likes when a user likes a members profile - DAVID
-app.put("/likeProfile/:likerUsername/:memberUsername", async (req, res) => {
-  try {
-    const member = req.params.memberUsername;
-    const liker = req.params.likerUsername;
-
-    // 1. Fetch the profile row from Supabase
-    const { data: profile } = await supabase
-      .from("membersProfile")
-      .select("likes")
-      .eq("username", member)
-      .single();
-
-    // FIXED: Prevent "Cannot read properties of null" crash if profile name doesn't exist
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
-    }
-
-    // UPDATED FOR TEXT ARRAY: Grab array data directly. Fall back to clean array if null.
-    const updatedLikes = profile.likes || [];
-
-    // Prevent duplicate entries in your array if the user double-clicks like
-    if (!updatedLikes.includes(liker)) {
-      updatedLikes.push(liker);
-    }
-
-    // 3. Update the row back in Supabase (saving as a true array object payload)
-    const { error } = await supabase
-      .from("membersProfile")
-      .update({ likes: updatedLikes })
-      .eq("username", member);
-
-    if (!error) {
-      res.status(200).json({ message: "Successfully updated" });
-    } else {
-      throw new Error("Could not update number of likes");
-    }
-  } catch (error) {
-    console.error("Error liking profile", error);
-    res.status(500).send({ message: "Internal server error" });
-  }
-});
-
-
-//updating number of likes when a user dislikes a members profile - DAVID
-app.put("/dislikeProfile/:likerUsername/:memberUsername", async (req, res) => {
-  try {
-    const member = req.params.memberUsername;
-    const liker = req.params.likerUsername;
-
-    // 1. Fetch the profile row from Supabase
-    const { data: profile } = await supabase
-      .from("membersProfile")
-      .select("likes")
-      .eq("username", member)
-      .single();
-
-    // FIXED: Prevent crash if profile name doesn't exist
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
-    }
-
-    // UPDATED FOR TEXT ARRAY: Read directly as array structure
-    const currentLikes = profile.likes || [];
-    const updatedLikes = currentLikes.filter((item) => item !== liker);
-
-    // 3. Update the row back in Supabase
-    const { error } = await supabase
-      .from("membersProfile")
-      .update({ likes: updatedLikes })
-      .eq("username", member);
-
-    if (!error) {
-      res.status(200).json({ message: "successfully disliked profile" });
-    } else {
-      throw new Error("Could not update number of likes");
-    }
-  } catch (error) {
-    console.error("Error disliking profile", error);
-    res.status(500).send({ message: "Internal server error" });
-  }
-});
-
-
-// Adding pictures - DAVID
-app.put(
-  "/addPictures/:username",
-  upload.single("picture"),
-  async (req, res) => {
-    try {
-      const b64 = req.file.buffer.toString("base64");
-      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
-      const pfpPath = await cloudinary.uploader.upload(dataURI);
-
-      // 1. Fetch the profile row from Supabase
-      const { data: profile } = await supabase
-        .from("membersProfile")
-        .select("pics_paths") // UPDATED: Match your schema's pics_paths column
-        .eq("username", req.params.username)
-        .single();
-
-      if (!profile) {
-        return res.status(404).json({ message: "Profile not found" });
-      }
-
-      // 2. Push the new Cloudinary URL into the array
-      const updatedPics = profile.pics_paths || []; // UPDATED: Match your column name
-      updatedPics.push(pfpPath.secure_url);
-
-      // 3. Update the row back in Supabase
-      const { error } = await supabase
-        .from("membersProfile")
-        .update({ pics_paths: updatedPics }) // UPDATED: Match your column name
-        .eq("username", req.params.username);
-
-      if (!error) {
-        res.status(200).json({ message: "successfully updated" });
-      } else {
-        throw new Error("couldn't add picture");
-      }
-    } catch (error) {
-      console.error("Error adding new pictures", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
-
-// Removing pictures - DAVID
-app.put("/removePicture/:username", async (req, res) => {
-  try {
-    const path = req.body.path;
-
-    // 1. Fetch the profile row from Supabase
-    const { data: profile } = await supabase
-      .from("membersProfile")
-      .select("pics_paths") // UPDATED: Match your schema's pics_paths column
-      .eq("username", req.params.username)
-      .single();
-
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
-    }
-
-    // 2. Filter out (pull) the specific image path from the array
-    const currentPics = profile.pics_paths || []; // UPDATED: Match your column name
-    const updatedPics = currentPics.filter((item) => item !== path);
-
-    // 3. Update the row back in Supabase
-    const { error } = await supabase
-      .from("membersProfile")
-      .update({ pics_paths: updatedPics }) // UPDATED: Match your column name
-      .eq("username", req.params.username);
-
-    if (!error) {
-      res.status(200).json({ message: "successfully removed picture" });
-    } else {
-      throw new Error("couldn't remove picture");
-    }
-  } catch (error) {
-    console.error("Error adding new pictures", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-
-//posting a new message - DAVID
-app.post("/sendAMessage", async (req, res) => {
-  try {
-    //maps incoming keys to exact Supabase columns
-    const messagePayload = {
-      sender_id: req.body.senderId,
-      receiver_id: req.body.recieverId,
-      message: req.body.content,
-      room: req.body.room || null,
-    };
-
-    const { error } = await supabase.from("messages").insert([messagePayload]);
-
-    if (error) throw error;
-
-    res.status(200).json({ message: "successsfully sent" });
-  } catch (error) {
-    console.error("Error sending messages", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});                                            
-
-//getting messages recieved by a user - DAVID
-app.get("/messages/:username", async (req, res) => {
+// getting unread messages and count for a user - new messages indicator - DANIELLA
+app.get("/messages/unread/:username", async (req, res) => {
   try {
     const username = req.params.username;
 
-    //maps to sender_id and receiver_id
-    const { data: result, error } = await supabase
+    const { data: unreadMessages, error } = await supabase
       .from("messages")
       .select("*")
-      .or(`receiver_id.eq.${username},sender_id.eq.${username}`);
+      .eq("receiver_id", username)
+      .eq("is_read", false)
+      .order("created_at", { ascending: false });
 
     if (error) throw error;
 
-    //map database snake_case keys back to camelCase
-    const mappedResult = result.map((msg) => ({
+    const mappedMessages = unreadMessages.map((msg) => ({
       id: msg.id,
       senderId: msg.sender_id,
       recieverId: msg.receiver_id,
       room: msg.room,
       content: msg.message,
-      created_at: msg.created_at,
+      isRead: msg.is_read,
+      created_at: msg.created_at
     }));
 
-    res.json(mappedResult);
+    const countBySender = {};
+    for (const msg of mappedMessages) {
+      countBySender[msg.senderId] = (countBySender[msg.senderId] || 0) + 1;
+    }
+
+    res.status(200).json({
+      totalUnread: mappedMessages.length,
+      countBySender,
+      messages: mappedMessages
+    });
   } catch (error) {
-    console.error("Error getting messages", error);
-    res.status(500).send({ message: "Internal server error" });
+    console.error("Error getting unread messages", error);
+    res.status(500).json({ message: "Internal server error" });
   }
 });
-
 
 
 // -------------------------------------------------------------------------------------------------------
 // 
 // NISSI'S ENDPOINTS
 //
-//--------------------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------------
 
-
-//creating a new connection request when someone sends it - NISSI
+// creating a new connection request when someone sends it - NISSI
 app.post(
   "/connectionRequest/:senderUsername/:recieverUsername",
   async (req, res) => {
     let status = 500;
     let message = "Internal server error";
-    const invalid = () => {
-      status = 400;
-      message = "user does not exist";
-    };
     try {
       const senderUsername = req.params.senderUsername;
       const recieverUsername = req.params.recieverUsername;
@@ -664,11 +792,11 @@ app.post(
         }])
         .select();
 
-        if (error) {
-          console.error("Supabase Error Details:", error);
-          return res.status(400).json({ message: error.message });
-        }
-      
+      if (error) {
+        console.error("Supabase Error Details:", error);
+        return res.status(400).json({ message: error.message });
+      }
+
       if (!error && result) {
         res.status(200).json({ message: "successfully sent request" });
       } else {
@@ -681,9 +809,9 @@ app.post(
   }
 );
 
-//getting all connection requests recieved by user - NISSI
+// getting all connection requests recieved by user - NISSI
 app.get("/connectionRequests/:username", async (req, res) => {
-  try { 
+  try {
     const username = req.params.username;
 
     const { data: result, error } = await supabase
@@ -703,20 +831,18 @@ app.get("/connectionRequests/:username", async (req, res) => {
       hasAccepted: reqItem.has_accepted
     }));
 
-    res.status(200).json(formattedResult); 
-   
+    res.status(200).json(formattedResult);
   } catch (error) {
     console.error("Error getting connection requests", error);
     res.status(500).send({ message: "Internal server error" });
   }
 });
 
-//updating the hasAccepted and dataAccepted field when a user accepts a connection request - NISSI
+// updating the hasAccepted and dataAccepted field when a user accepts a connection request - NISSI
 app.put(
   "/acceptedConnectionRequest/:recieverUsername",
   async (req, res) => {
     try {
-      
       const senderUsername = req.body.senderUsername;
       const recieverUsername = req.params.recieverUsername;
 
@@ -760,8 +886,6 @@ app.put(
           hasAccepted: resData.has_accepted,
           dateAccepted: resData.date_accepted
         });
-
-
       } else {
         return res.status(400).json({ message: "No matching connection request found to update" });
       }
@@ -772,14 +896,13 @@ app.put(
   }
 );
 
-//when a user removes a member as a connection - NISSI
+// when a user removes a member as a connection - NISSI
 app.delete(
   "/removeConnectionRequest",
   async (req, res) => {
     try {
       const senderUsername = req.body.senderUsername;
       const recieverUsername = req.body.recieverUsername;
-      console.log(req.body)
 
       const { data: deletedResult, error: delErr } = await supabase
         .from("connection_requests")
@@ -822,7 +945,7 @@ app.delete(
   }
 );
 
-//canceling a connection request - NISSI
+// canceling a connection request - NISSI
 app.delete(
   "/cancelConnectionRequest",
   async (req, res) => {
@@ -849,7 +972,6 @@ app.delete(
       } else {
         res.status(200).json({});
       }
-
     } catch (error) {
       console.error("Error cancelling connection request", error);
       res.status(500).send({ message: "Internal server error" });
@@ -857,7 +979,7 @@ app.delete(
   }
 );
 
-//Notifications endpoints - NISSI
+// Notifications endpoints - NISSI
 app.post("/notifications", async (req, res) => {
   try {
     const { receiver_username, sender_username, type, content } = req.body;
@@ -878,10 +1000,8 @@ app.post("/notifications", async (req, res) => {
 
     res.status(200).json({ message: "Notification created successfully", notification: data[0] });
   } catch (error) {
-
     console.error("Error creating notification", error);
     res.status(500).json({ message: "Internal server error" });
-
   }
 });
 
@@ -942,8 +1062,7 @@ app.delete("/notifications/:id", async (req, res) => {
   }
 });
 
-
-//To verify that email exists before doing the password reset thing - NISSI
+// To verify that email exists before doing the password reset thing - NISSI
 app.post("/check-email", async (req, res) => {
   try {
     const { email } = req.body;
@@ -971,9 +1090,7 @@ app.post("/check-email", async (req, res) => {
   }
 });
 
-
 app.post("/reset-password", async (req, res) => {
-
   try {
     const { email, newPassword, confirmPassword } = req.body;
 
@@ -1022,6 +1139,9 @@ app.post("/reset-password", async (req, res) => {
   }
 });
 
+// -------------------------------------------------------------------------------------------------------
+// SERVER LISTENER
+// -------------------------------------------------------------------------------------------------------
 server.listen(port, async () => {
   console.log(`Server is running on http://localhost:${port}`);
   await connectToMongo();
