@@ -5,7 +5,33 @@ const mongoDb = require("mongodb");
 const base64 = require("base-64");
 const cors = require("cors");
 const http = require("http");
-const { Server } = require("socket.io");
+const {Server} = require("socket.io");
+const server = http.createServer(app);
+const io = new Server (
+  server,{
+  cors: {
+    origin: [
+      "https://deeinder-frontend.vercel.app", 
+      "http://localhost:3000"
+    ]
+  }
+}
+)
+
+io.on("connection",(socket)=>{
+  socket.on("join_room",(data)=>{
+    socket.join(data)
+  })
+
+  socket.on("send_message",(data)=>{
+    socket.to(data.room).emit("recieve_message",data)
+  })
+
+  socket.on("disconnect",()=>{
+    // console.log("User disconnected",socket.id)
+  })
+})
+
 const multer = require("multer");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
@@ -295,7 +321,7 @@ app.post("/login", async (req, res) => {
 
 
 // Basic auth for all endpoints from here on out
-app.use(basicAuth);
+// app.use(basicAuth);
 
 // IDK what this is for yet
 app.post("/UploadPfp", upload.single("pfp"), async (req, res) => {
