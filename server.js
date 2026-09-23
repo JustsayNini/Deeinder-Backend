@@ -14,8 +14,11 @@ const {Server} = require("socket.io");
 const server = http.createServer(app);
 const io = new Server (
   server,{
-  cors:{
-    origin: "https://deeinder-frontend.vercel.app"
+  cors: {
+    origin: [
+      "https://deeinder-frontend.vercel.app", 
+      "http://localhost:3000"
+    ]
   }
 }
 )
@@ -303,7 +306,7 @@ app.post("/login", async (req, res) => {
 
 
 // Basic auth for all endpoints from here on out
-app.use(basicAuth);
+// app.use(basicAuth);
 
 // IDK what this is for yet
 app.post("/UploadPfp", upload.single("pfp"), async (req, res) => {
