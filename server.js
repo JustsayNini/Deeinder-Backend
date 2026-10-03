@@ -886,9 +886,6 @@ app.put(
           hasAccepted: resData.has_accepted,
           dateAccepted: resData.date_accepted
         });
-
-      if (updateErr) console.error("Supabase Update Err:", updateErr);
-
       } else {
         return res.status(400).json({ message: "No matching connection request found to update" });
       }
@@ -963,18 +960,6 @@ app.delete(
         .select();
 
       if (error) throw error;
-
-      if (deletedResult && deletedResult.length > 0) {
-        const delData = deletedResult[0];
-        res.status(200).json({
-          id: delData.id,
-          senderUsername: delData.sender_username,
-          recieverUsername: delData.receiver_username,
-          hasAccepted: delData.has_accepted
-        });
-      } else {
-        res.status(200).json({});
-      }
 
       if (deletedResult && deletedResult.length > 0) {
         const delData = deletedResult[0];
