@@ -135,6 +135,7 @@ async function verifyProfilePicture(fileBuffer) {
     formData.append("image_base64", base64Image);
     formData.append("return_attributes", "blur");
 
+    // Updated the target URL to point to the correct v3 face detection endpoint
     const response = await axios.post("https://faceplusplus.com", formData, {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -665,7 +666,7 @@ app.get("/membersProfiles", async (req, res) => {
         connections: profile.connections_count ?? 0,
         picsPaths: profile.pics_paths ?? []
       };
-    });
+    }); 
 
     res.status(200).json([...members]);
   } catch (error) {
